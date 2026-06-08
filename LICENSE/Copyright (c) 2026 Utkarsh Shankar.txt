@@ -1,0 +1,11 @@
+Copyright (c) 2026 Utkarsh Shankar
+All rights reserved.
+
+This project and all associated materials -- including but
+not limited to the concept, design documents, system prompt,
+and source code -- are the exclusive intellectual property
+of  Utkarsh Shankar.
+
+No part of this project may be reproduced, distributed,
+modified, or used in any form without explicit written
+permission from the copyright holder.
