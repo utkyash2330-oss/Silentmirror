@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify
 from flask_cors import CORS
 from anthropic import Anthropic
 import sqlite3
@@ -472,7 +472,8 @@ def load_user_context(user_id):
 
 @app.route("/", methods=["GET"])
 def index():
-    return send_file("../app/SilentMirror_v2.html")
+    html_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "app", "SilentMirror_v2.html")
+    return send_file(html_path)
 
 
 def load_history(user_id):
