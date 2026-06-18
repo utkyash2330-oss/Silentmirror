@@ -472,7 +472,10 @@ def load_user_context(user_id):
 
 @app.route("/", methods=["GET"])
 def index():
-    html_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "app", "SilentMirror_v2.html")
+    html_path = os.path.join(os.path.dirname(__file__), "app", "SilentMirror_v2.html")
+    print("__file__ =", __file__)
+    print("html_path =", html_path)
+    print("exists =", os.path.exists(html_path))
     return send_file(html_path)
 
 
