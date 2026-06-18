@@ -370,6 +370,9 @@ def init_db():
     db.commit()
     db.close()
 
+print("Initializing database...")
+init_db()
+print("Database initialized.")
 
 def load_user_context(user_id):
     db = get_db()
