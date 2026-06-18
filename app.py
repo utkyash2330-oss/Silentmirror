@@ -7,6 +7,11 @@ import os
 import re
 
 app = Flask(__name__)
+@app.route("/routes")
+def routes():
+    return {
+        "routes": [str(rule) for rule in app.url_map.iter_rules()]
+    }
 CORS(app)
 client = Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
 
