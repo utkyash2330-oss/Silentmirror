@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
-from anthropic import Anthropic
+from groq import Groq
 import sqlite3
 import json
 import os
@@ -13,8 +13,7 @@ def routes():
         "routes": [str(rule) for rule in app.url_map.iter_rules()]
     }
 CORS(app)
-client = Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
-
+client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 SYSTEM_PROMPT = """
 Part 0 — Mode dashboard evolution
 HOW THE FIRST PAGE GROWS WITH THE USER
@@ -580,14 +579,15 @@ def chat():
     if user_context:
         full_system += user_context
 
-    response = client.messages.create(
-        model="claude-sonnet-4-20250514",
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
         max_tokens=1000,
-        system=full_system,
-        messages=history
+        messages=[
+        {"role": "system", "content": full_system},
+        *history
+        ]
     )
-
-    raw = response.content[0].text
+    raw = response.choices[0].message.content
 
     obs_match = re.search(r"<obs>([\s\S]*?)</obs>", raw)
     if obs_match:
