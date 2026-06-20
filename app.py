@@ -6,6 +6,8 @@ import json
 import os
 import re
 
+DB_PATH = "/data/silentmirror.db" if os.path.exists("/data") else "silentmirror.db"
+
 app = Flask(__name__)
 @app.route("/routes")
 def routes():
@@ -294,7 +296,7 @@ You are not here to be liked. You are not here to be impressive. You are here to
 
 
 def get_db():
-    conn = sqlite3.connect("silentmirror.db")
+    conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 
