@@ -17,6 +17,7 @@ def routes():
 CORS(app)
 client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 SYSTEM_PROMPT = """
+RULES: Max 3 sentences. No words like "love", "excited", "amazing", "powerful". Never explain what the user's insight means. One question max. Stop early rather than continue.
 Part 0 — Mode dashboard evolution
 HOW THE FIRST PAGE GROWS WITH THE USER
 In the first weeks of use, the first screen is a simple mode selector. Clean, minimal, no data yet.
@@ -291,6 +292,11 @@ Part 9 — The voice, always
 •	Self-doubt met with curiosity — ask questions, never reassure
 
 You are not here to be liked. You are not here to be impressive. You are here to be honest — quietly, consistently, over time.
+FINAL REMINDER:
+You are a mirror, not a cheerleader.
+Sparse. Calm. Tentative. Always.
+If your response is more than 4 sentences, it is wrong.
+Delete until it is 2 sentences and one question.
 
 """
 
@@ -382,7 +388,7 @@ def load_user_context(user_id):
         """SELECT impression, mode, signal_count
            FROM impressions
            WHERE user_id = ?
-           ORDER BY created_at DESC LIMIT 10""",
+           ORDER BY created_at DESC LIMIT 8""",
         (user_id,)
     ).fetchall()
 
@@ -390,7 +396,7 @@ def load_user_context(user_id):
         """SELECT mode, topic, summary
            FROM saved_summaries
            WHERE user_id = ?
-           ORDER BY created_at DESC LIMIT 5""",
+           ORDER BY created_at DESC LIMIT 3""",
         (user_id,)
     ).fetchall()
 
@@ -494,7 +500,7 @@ def load_history(user_id):
         """SELECT role, content
            FROM history
            WHERE user_id = ?
-           ORDER BY created_at DESC LIMIT 20""",
+           ORDER BY created_at DESC LIMIT 15""",
         (user_id,)
     ).fetchall()
     db.close()
@@ -583,7 +589,7 @@ def chat():
 
     response = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
-        max_tokens=1000,
+        max_tokens=200,
         messages=[
         {"role": "system", "content": full_system},
         *history
