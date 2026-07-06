@@ -4,3 +4,4 @@ __pycache__/
 silentmirror.db
 .env
 *.env
+engine/
