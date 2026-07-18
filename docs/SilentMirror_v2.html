@@ -361,14 +361,6 @@
 
 <script>
 const BACKEND = "https://silentmirror-production.up.railway.app";
-// Must match the SM_SHARED_SECRET env var set on the Railway backend.
-// Fine for personal/private-repo use — see chat notes for what to do
-// before this repo ever goes public.
-const SM_AUTH = "PASTE_YOUR_SM_SHARED_SECRET_HERE";
-const authHeaders = () => ({
-  "Content-Type": "application/json",
-  "X-SM-Auth": SM_AUTH
-});
 
 const userId = localStorage.getItem("sm_user_id") || (() => {
   const id = "user_" + Math.random().toString(36).substr(2, 9);
@@ -471,7 +463,7 @@ async function handleMirror(choice, btn) {
   try {
     await fetch(BACKEND + "/reflection-feedback", {
       method: "POST",
-      headers: authHeaders(),
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         user_id: userId,
         reflection: reflectionText,
@@ -509,7 +501,7 @@ async function submitCheckin(mood) {
   try {
     await fetch(BACKEND + "/checkin", {
       method: "POST",
-      headers: authHeaders(),
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         user_id: userId,
         mood: mood,
@@ -544,7 +536,7 @@ async function saveJournal() {
   try {
     await fetch(BACKEND + "/journal", {
       method: "POST",
-      headers: authHeaders(),
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         user_id: userId,
         entry: entry,
@@ -564,7 +556,7 @@ document.getElementById("save-yes").onclick = async () => {
   try {
     await fetch(BACKEND + "/save", {
       method: "POST",
-      headers: authHeaders(),
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         user_id: userId,
         mode: currentMode,
@@ -595,7 +587,7 @@ async function send() {
   try {
     const res = await fetch(BACKEND + "/chat", {
       method: "POST",
-      headers: authHeaders(),
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         user_id: userId,
         message: text
