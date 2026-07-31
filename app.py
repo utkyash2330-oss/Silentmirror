@@ -60,6 +60,18 @@ def init_db():
         user_id TEXT, entry TEXT, mood TEXT, mode TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""")
+    db.execute("""CREATE TABLE IF NOT EXISTS saved_insights (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id TEXT,
+        category TEXT,
+        mode TEXT,
+        original_text TEXT,   -- what SM actually said when saved, never edited
+        user_text TEXT,       -- the user's current, editable version — this is
+                               -- what gets fed back into future prompt context
+        tier_at_save TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )""")
     db.commit()
     db.close()
     observation.init_signals_table()
@@ -151,7 +163,7 @@ def chat():
     full_system = SYSTEM_PROMPT + context_block
 
     try:
-        raw, provider = llm_router.get_completion(full_system, history, max_tokens=250)
+        raw, provider = llm_router.get_completion(full_system, history, max_tokens=500)
     except RuntimeError as e:
         return jsonify({"error": "Both models are currently unavailable. Please try again shortly."}), 503
 
@@ -163,7 +175,17 @@ def chat():
     reply = SIG_TAG.sub("", raw).strip()
     save_to_db(user_id, "assistant", reply)
 
-    return jsonify({"reply": reply})
+    # give the frontend real, current state to display — no more relying
+    # on the model to self-report via a tag that no longer exists (v1's
+    # <obs>/<mirror> tags are gone; this is the deterministic replacement)
+    display_patterns = observation.get_active_patterns(user_id, min_tier="candidate")
+    top_mode = display_patterns[0]["mode"] if display_patterns else "general"
+
+    return jsonify({
+        "reply": reply,
+        "pattern_count": len(display_patterns),
+        "mode": top_mode
+    })
 
 
 @app.route("/checkin", methods=["POST"])
@@ -259,6 +281,112 @@ def get_journal():
     return jsonify([dict(e) for e in entries])
 
 
+# ---- My Mirror dashboard: saved/curated insights ----
+
+@app.route("/insights/candidates", methods=["GET"])
+def insight_candidates():
+    """
+    High-confidence patterns not yet saved to the dashboard — the
+    'ready to save' list. Never auto-saves anything; the user chooses.
+    """
+    user_id = request.args.get("user_id")
+    patterns = observation.get_active_patterns(user_id, min_tier="high_confidence")
+
+    db = get_db()
+    already_saved = db.execute(
+        "SELECT category, mode FROM saved_insights WHERE user_id=?", (user_id,)
+    ).fetchall()
+    db.close()
+    saved_keys = {(r["category"], r["mode"]) for r in already_saved}
+
+    candidates = [
+        p for p in patterns
+        if (p["category"], p["mode"]) not in saved_keys
+    ]
+    return jsonify(candidates)
+
+
+@app.route("/insights", methods=["GET"])
+def list_insights():
+    user_id = request.args.get("user_id")
+    db = get_db()
+    rows = db.execute(
+        "SELECT * FROM saved_insights WHERE user_id=? ORDER BY created_at DESC", (user_id,)
+    ).fetchall()
+    db.close()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route("/insights", methods=["POST"])
+def save_insight():
+    data = request.json
+    user_id = data.get("user_id")
+    category = data.get("category", "")
+    mode = data.get("mode", "general")
+    text = data.get("text", "")
+    tier = data.get("tier", "high_confidence")
+
+    if not user_id or not text:
+        return jsonify({"error": "Missing user_id or text"}), 400
+
+    db = get_db()
+    db.execute(
+        """INSERT INTO saved_insights
+           (user_id, category, mode, original_text, user_text, tier_at_save)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (user_id, category, mode, text, text, tier)
+    )
+    db.commit()
+    db.close()
+    return jsonify({"status": "saved"})
+
+
+@app.route("/insights/<int:insight_id>", methods=["PUT"])
+def edit_insight(insight_id):
+    data = request.json
+    user_id = data.get("user_id")
+    new_text = data.get("user_text", "")
+
+    if not user_id or not new_text:
+        return jsonify({"error": "Missing user_id or user_text"}), 400
+
+    db = get_db()
+    # ownership check — even with the shared-secret auth layer, don't let
+    # one request edit a row that isn't this user's
+    owned = db.execute(
+        "SELECT id FROM saved_insights WHERE id=? AND user_id=?", (insight_id, user_id)
+    ).fetchone()
+    if not owned:
+        db.close()
+        return jsonify({"error": "Not found"}), 404
+
+    db.execute(
+        """UPDATE saved_insights SET user_text=?, updated_at=CURRENT_TIMESTAMP
+           WHERE id=? AND user_id=?""",
+        (new_text, insight_id, user_id)
+    )
+    db.commit()
+    db.close()
+    return jsonify({"status": "updated"})
+
+
+@app.route("/insights/<int:insight_id>", methods=["DELETE"])
+def delete_insight(insight_id):
+    user_id = request.args.get("user_id")
+    db = get_db()
+    owned = db.execute(
+        "SELECT id FROM saved_insights WHERE id=? AND user_id=?", (insight_id, user_id)
+    ).fetchone()
+    if not owned:
+        db.close()
+        return jsonify({"error": "Not found"}), 404
+
+    db.execute("DELETE FROM saved_insights WHERE id=? AND user_id=?", (insight_id, user_id))
+    db.commit()
+    db.close()
+    return jsonify({"status": "deleted"})
+
+
 @app.route("/profile", methods=["GET"])
 def get_profile():
     user_id = request.args.get("user_id")
@@ -303,6 +431,8 @@ def export_data():
             "SELECT * FROM journal WHERE user_id=?", (user_id,)).fetchall()],
         "checkins": [dict(r) for r in db.execute(
             "SELECT * FROM checkins WHERE user_id=?", (user_id,)).fetchall()],
+        "saved_insights": [dict(r) for r in db.execute(
+            "SELECT * FROM saved_insights WHERE user_id=?", (user_id,)).fetchall()],
     }
     db.close()
     return jsonify(out)
@@ -313,7 +443,8 @@ def reset_data():
     user_id = request.json.get("user_id")
     db = get_db()
     for table in ["history", "saved_summaries", "journal", "checkins",
-                  "reflection_feedback", "signals", "contradictions", "users"]:
+                  "reflection_feedback", "signals", "contradictions", "users",
+                  "saved_insights"]:
         db.execute(f"DELETE FROM {table} WHERE user_id=?", (user_id,))
     db.commit()
     db.close()

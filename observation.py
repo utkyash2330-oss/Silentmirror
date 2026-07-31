@@ -202,22 +202,43 @@ def get_active_patterns(user_id, min_tier="eligible"):
     return patterns
 
 
+def get_saved_insights(user_id):
+    """
+    User-curated insights from the My Mirror dashboard. These are
+    declared data (the user explicitly saved and can edit them) — per
+    the declared-beats-inferred rule, they're surfaced to the prompt
+    ahead of computed patterns and never subject to decay/retirement,
+    since the user is the one deciding when they stop being relevant
+    (by editing or deleting), not a timer.
+    """
+    db = get_db()
+    rows = db.execute(
+        "SELECT category, mode, user_text FROM saved_insights WHERE user_id=?",
+        (user_id,)
+    ).fetchall()
+    db.close()
+    return [dict(r) for r in rows]
+
+
 def format_context_for_prompt(user_id, min_tier="eligible"):
     """
     Produces the plain-text block that goes into the prompt's
     MIRROR CONTEXT section. This is the ONLY threshold/tier information
     the LLM ever receives — already fully decided, nothing to compute.
     """
-    patterns = get_active_patterns(user_id, min_tier=min_tier)
-    if not patterns:
-        return ""
-
     lines = []
+
+    saved = get_saved_insights(user_id)
+    for s in saved:
+        lines.append(f"- [{s['mode']}] {s['category']} (user-confirmed): {s['user_text']}")
+
+    patterns = get_active_patterns(user_id, min_tier=min_tier)
     for p in patterns:
         line = f"- [{p['mode']}] {p['category']}: tier={p['tier']}, signals={p['signal_count']}, last_seen={p['last_seen']}"
         if p["contradiction"]:
             line += f", contradiction={p['contradiction']}"
         lines.append(line)
+
     return "\n".join(lines)
 
 
