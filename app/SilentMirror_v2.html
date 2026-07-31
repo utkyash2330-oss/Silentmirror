@@ -720,28 +720,48 @@ function closeDashboard() {
   dashboardEl.classList.remove("visible");
 }
 
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+let _candidateList = [];
+
 async function loadCandidates() {
   candidatesEl.innerHTML = "<div class='mirror-empty'>Loading...</div>";
   try {
     const res = await fetch(BACKEND + "/insights/candidates?user_id=" + userId, {
       headers: authHeaders()
     });
-    const list = await res.json();
+    _candidateList = await res.json();
 
-    if (!list.length) {
+    if (!_candidateList.length) {
       candidatesEl.innerHTML = "<div class='mirror-empty'>Nothing at high confidence yet — this fills in as patterns build up over time.</div>";
       return;
     }
 
-    candidatesEl.innerHTML = list.map(p => `
+    // Buttons carry only a numeric index (data-idx) — never raw text —
+    // so there's nothing here that can break out of an HTML attribute,
+    // unlike the earlier version which embedded JSON-stringified text
+    // (double-quoted) inside a double-quoted onclick attribute and
+    // silently corrupted the markup.
+    candidatesEl.innerHTML = _candidateList.map((p, idx) => `
       <div class="mirror-card">
-        <div class="mirror-card-tag">${p.mode} · ${p.category}</div>
-        <div class="mirror-card-text">${p.last_phrase || "(no summary text yet)"}</div>
+        <div class="mirror-card-tag">${escapeHtml(p.mode)} · ${escapeHtml(p.category)}</div>
+        <div class="mirror-card-text">${escapeHtml(p.last_phrase || "(no summary text yet)")}</div>
         <div class="mirror-card-actions">
-          <button onclick="saveCandidate('${p.category}', '${p.mode}', ${JSON.stringify(p.last_phrase || "")}, '${p.tier}')">Save to My Mirror</button>
+          <button data-idx="${idx}" class="save-candidate-btn">Save to My Mirror</button>
         </div>
       </div>
     `).join("");
+
+    candidatesEl.querySelectorAll(".save-candidate-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const p = _candidateList[parseInt(btn.dataset.idx, 10)];
+        saveCandidate(p.category, p.mode, p.last_phrase || "", p.tier);
+      });
+    });
   } catch (e) {
     candidatesEl.innerHTML = "<div class='mirror-empty'>Couldn't load right now.</div>";
   }
@@ -773,8 +793,8 @@ async function loadSavedInsights() {
 
     savedEl.innerHTML = list.map(i => `
       <div class="mirror-card" id="insight-${i.id}">
-        <div class="mirror-card-tag">${i.mode} · ${i.category}</div>
-        <div class="mirror-card-text">${i.user_text}</div>
+        <div class="mirror-card-tag">${escapeHtml(i.mode)} · ${escapeHtml(i.category)}</div>
+        <div class="mirror-card-text">${escapeHtml(i.user_text)}</div>
         <div class="mirror-card-actions">
           <button onclick="toggleEdit(${i.id})">Customize</button>
           <button class="danger" onclick="deleteInsight(${i.id})">Delete</button>
