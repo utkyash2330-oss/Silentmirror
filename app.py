@@ -81,7 +81,7 @@ print("Initializing database...")
 init_db()
 print("Database initialized.")
 
-SIG_TAG = re.compile(r'<sig category="([^"]+)" mode="([^"]+)">([^<]+)</sig>')
+SIG_TAG = re.compile(r'<sig category="([^"]+)">([^<]+)</sig>')
 MODE_TAG = re.compile(r'<mode>([^<]+)</mode>')
 
 
@@ -168,16 +168,17 @@ def chat():
     except RuntimeError as e:
         return jsonify({"error": "Both models are currently unavailable. Please try again shortly."}), 503
 
-    # parse <sig> tags the model emitted; log each as a raw signal.
-    # Python does the counting/tiering — the model only tags what it saw.
-    for category, mode, phrase in SIG_TAG.findall(raw):
-        observation.log_signal(user_id, category.strip(), mode.strip(), phrase.strip(), source="chat")
-
-    # live mode tag — reflects THIS turn's topic, separate from historical
-    # signal data. Falls back to pattern-history mode only if the model
-    # somehow omitted the tag.
+    # single shared mode judgment for this turn — used for BOTH the
+    # display badge and categorizing any <sig> logged below, so the two
+    # can no longer silently disagree with each other
     mode_match = MODE_TAG.search(raw)
-    live_mode = mode_match.group(1).strip() if mode_match else None
+    live_mode = mode_match.group(1).strip() if mode_match else "general"
+
+    # parse <sig> tags the model emitted; log each as a raw signal,
+    # tagged with the single live_mode above rather than a second,
+    # independent per-sig guess
+    for category, phrase in SIG_TAG.findall(raw):
+        observation.log_signal(user_id, category.strip(), live_mode, phrase.strip(), source="chat")
 
     reply = SIG_TAG.sub("", raw)
     reply = MODE_TAG.sub("", reply).strip()
