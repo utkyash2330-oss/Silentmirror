@@ -82,6 +82,7 @@ init_db()
 print("Database initialized.")
 
 SIG_TAG = re.compile(r'<sig category="([^"]+)" mode="([^"]+)">([^<]+)</sig>')
+MODE_TAG = re.compile(r'<mode>([^<]+)</mode>')
 
 
 def load_history(user_id, limit=15):
@@ -172,14 +173,18 @@ def chat():
     for category, mode, phrase in SIG_TAG.findall(raw):
         observation.log_signal(user_id, category.strip(), mode.strip(), phrase.strip(), source="chat")
 
-    reply = SIG_TAG.sub("", raw).strip()
+    # live mode tag — reflects THIS turn's topic, separate from historical
+    # signal data. Falls back to pattern-history mode only if the model
+    # somehow omitted the tag.
+    mode_match = MODE_TAG.search(raw)
+    live_mode = mode_match.group(1).strip() if mode_match else None
+
+    reply = SIG_TAG.sub("", raw)
+    reply = MODE_TAG.sub("", reply).strip()
     save_to_db(user_id, "assistant", reply)
 
-    # give the frontend real, current state to display — no more relying
-    # on the model to self-report via a tag that no longer exists (v1's
-    # <obs>/<mirror> tags are gone; this is the deterministic replacement)
     display_patterns = observation.get_active_patterns(user_id, min_tier="candidate")
-    top_mode = display_patterns[0]["mode"] if display_patterns else "general"
+    top_mode = live_mode or (display_patterns[0]["mode"] if display_patterns else "general")
 
     return jsonify({
         "reply": reply,
