@@ -134,6 +134,7 @@ def chat():
     data = request.json
     user_id = data.get("user_id")
     message = data.get("message", "")
+    mode_override = (data.get("mode_override") or "").strip()
 
     if not user_id or not message:
         return jsonify({"error": "Missing user_id or message"}), 400
@@ -168,11 +169,12 @@ def chat():
     except RuntimeError as e:
         return jsonify({"error": "Both models are currently unavailable. Please try again shortly."}), 503
 
-    # single shared mode judgment for this turn — used for BOTH the
-    # display badge and categorizing any <sig> logged below, so the two
-    # can no longer silently disagree with each other
+    # single shared mode judgment for this turn — the user's manual pin
+    # (if set) always wins over the model's own guess, per "user always
+    # decides"; otherwise fall back to the model's live <mode> tag
     mode_match = MODE_TAG.search(raw)
-    live_mode = mode_match.group(1).strip() if mode_match else "general"
+    model_mode = mode_match.group(1).strip() if mode_match else "general"
+    live_mode = mode_override if mode_override else model_mode
 
     # parse <sig> tags the model emitted; log each as a raw signal,
     # tagged with the single live_mode above rather than a second,

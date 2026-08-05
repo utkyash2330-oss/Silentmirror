@@ -292,6 +292,19 @@
   }
   .mirror-nav-btn:hover { background: var(--purple-l); }
 
+  #mode-badge { position: relative; }
+  #mode-picker {
+    display: none; position: absolute; top: 24px; left: 0; z-index: 60;
+    background: var(--bg2); border: 1px solid var(--purple-mid);
+    border-radius: 8px; min-width: 160px; box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+  }
+  #mode-picker.visible { display: block; }
+  .mode-option {
+    padding: 7px 12px; font-size: 12px; color: var(--text); cursor: pointer;
+  }
+  .mode-option:hover { background: var(--purple-l); }
+  .mode-option.pinned { color: var(--purple); font-weight: 600; }
+
   #mirror-dashboard {
     display: none; position: fixed; inset: 0; background: var(--bg);
     z-index: 50; overflow-y: auto; padding: 20px;
@@ -362,7 +375,15 @@
     <div id="header-left">
       <div id="logo-dot"></div>
       <span id="logo-text">Silent Mirror</span>
-      <span id="mode-badge">general</span>
+      <span id="mode-badge" onclick="toggleModePicker()" style="cursor:pointer;">general</span>
+      <div id="mode-picker">
+        <div class="mode-option" data-mode="">Auto (let SM detect)</div>
+        <div class="mode-option" data-mode="study">Study</div>
+        <div class="mode-option" data-mode="health">Health</div>
+        <div class="mode-option" data-mode="mirror">Mirror</div>
+        <div class="mode-option" data-mode="custom">Custom</div>
+        <div class="mode-option" data-mode="general">General</div>
+      </div>
       <button class="mirror-nav-btn" onclick="openDashboard()">My Mirror</button>
       <button class="mirror-nav-btn" onclick="openJournalView()">Journal</button>
     </div>
@@ -494,12 +515,36 @@ const pips = [1, 2, 3, 4, 5].map(i => document.getElementById("p" + i));
 
 function updateObs(n, mode) {
   currentMode = mode;
-  modeEl.textContent = mode;
+  if (!pinnedMode) modeEl.textContent = mode; // only show live mode if not pinned
   obsText.textContent = n === 0
     ? "0 patterns noted"
     : n + " pattern" + (n > 1 ? "s" : "") + " noted";
   pips.forEach((p, i) => p.classList.toggle("active", i < n));
 }
+
+// ---- Mode override / pin ----
+let pinnedMode = localStorage.getItem("sm_pinned_mode") || "";
+const modePickerEl = document.getElementById("mode-picker");
+
+function toggleModePicker(e) {
+  if (e) e.stopPropagation();
+  modePickerEl.classList.toggle("visible");
+}
+
+document.addEventListener("click", (e) => {
+  if (!e.target.closest("#mode-badge")) modePickerEl.classList.remove("visible");
+});
+
+modePickerEl.querySelectorAll(".mode-option").forEach(opt => {
+  opt.addEventListener("click", () => {
+    pinnedMode = opt.dataset.mode;
+    localStorage.setItem("sm_pinned_mode", pinnedMode);
+    modeEl.textContent = pinnedMode || currentMode;
+    modePickerEl.classList.remove("visible");
+  });
+});
+
+if (pinnedMode) modeEl.textContent = pinnedMode;
 
 function addMsg(role, text) {
   const div = document.createElement("div");
@@ -701,7 +746,8 @@ async function send() {
       headers: authHeaders(),
       body: JSON.stringify({
         user_id: userId,
-        message: text
+        message: text,
+        mode_override: pinnedMode
       })
     });
 
