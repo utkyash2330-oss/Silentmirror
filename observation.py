@@ -146,6 +146,32 @@ def _recent_contradiction_strength(db, user_id, category, mode):
     return "soft"
 
 
+def get_evaluation_stats(user_id):
+    """
+    Real, computed proxy metrics — not hypothetical. Turns the
+    affirm/correct rate discussed as an evaluation strategy into an
+    actual number, drawn from reflection_feedback.
+    """
+    db = get_db()
+    rows = db.execute(
+        "SELECT response, COUNT(*) as c FROM reflection_feedback WHERE user_id=? GROUP BY response",
+        (user_id,)
+    ).fetchall()
+    db.close()
+
+    counts = {r["response"]: r["c"] for r in rows}
+    affirmed = counts.get("yes", 0)
+    corrected = counts.get("no", 0)
+    total = affirmed + corrected
+
+    return {
+        "total_feedback": total,
+        "affirmed": affirmed,
+        "corrected": corrected,
+        "affirm_rate": round(affirmed / total, 2) if total > 0 else None,
+    }
+
+
 def get_active_patterns(user_id, min_tier="eligible"):
     """
     Returns computed, ready-to-inject facts for every pattern group at or
@@ -220,6 +246,22 @@ def get_saved_insights(user_id):
     return [dict(r) for r in rows]
 
 
+def get_recent_journal_entries(user_id, limit=3):
+    """
+    Actual journal text, not the derived mood signal. Without this, a
+    request like 'based on my journal, tell me about myself' had nothing
+    real to draw from — SM was answering as if it had journal access it
+    didn't actually have.
+    """
+    db = get_db()
+    rows = db.execute(
+        "SELECT entry FROM journal WHERE user_id=? ORDER BY created_at DESC LIMIT ?",
+        (user_id, limit)
+    ).fetchall()
+    db.close()
+    return [r["entry"] for r in rows]
+
+
 def format_context_for_prompt(user_id, min_tier="eligible"):
     """
     Produces the plain-text block that goes into the prompt's
@@ -230,7 +272,11 @@ def format_context_for_prompt(user_id, min_tier="eligible"):
 
     saved = get_saved_insights(user_id)
     for s in saved:
-        lines.append(f"- [{s['mode']}] {s['category']} (user-confirmed): {s['user_text']}")
+        lines.append(f"- [{s['mode']}] {s['category']} (user-confirmed, no tier — do not use tier-count phrasing for this): {s['user_text']}")
+
+    journal_entries = get_recent_journal_entries(user_id)
+    for entry in journal_entries:
+        lines.append(f"- (recent journal entry, verbatim, no tier): {entry}")
 
     patterns = get_active_patterns(user_id, min_tier=min_tier)
     for p in patterns:

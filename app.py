@@ -291,6 +291,12 @@ def get_journal():
 
 # ---- My Mirror dashboard: saved/curated insights ----
 
+@app.route("/evaluation", methods=["GET"])
+def get_evaluation():
+    user_id = request.args.get("user_id")
+    return jsonify(observation.get_evaluation_stats(user_id))
+
+
 @app.route("/insights/candidates", methods=["GET"])
 def insight_candidates():
     """

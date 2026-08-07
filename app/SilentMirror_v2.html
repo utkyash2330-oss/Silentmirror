@@ -396,6 +396,9 @@
       <button id="mirror-close-btn" onclick="closeDashboard()">&times;</button>
     </div>
 
+    <div class="mirror-section-title">Evaluation</div>
+    <div id="mirror-eval" class="mirror-card"></div>
+
     <div class="mirror-section-title">Ready to Save</div>
     <div id="mirror-candidates"></div>
 
@@ -784,7 +787,33 @@ const savedEl = document.getElementById("mirror-saved");
 
 async function openDashboard() {
   dashboardEl.classList.add("visible");
-  await Promise.all([loadCandidates(), loadSavedInsights()]);
+  await Promise.all([loadEvalStats(), loadCandidates(), loadSavedInsights()]);
+}
+
+async function loadEvalStats() {
+  const evalEl = document.getElementById("mirror-eval");
+  evalEl.innerHTML = "<div class='mirror-empty'>Loading...</div>";
+  try {
+    const res = await fetch(BACKEND + "/evaluation?user_id=" + userId, {
+      headers: authHeaders()
+    });
+    const stats = await res.json();
+
+    if (stats.total_feedback === 0) {
+      evalEl.innerHTML = "<div class='mirror-empty'>No reflection feedback yet — this fills in as you confirm or correct insights.</div>";
+      return;
+    }
+
+    evalEl.innerHTML = `
+      <div class="mirror-card-text">
+        ${stats.total_feedback} reflections responded to —
+        ${stats.affirmed} confirmed, ${stats.corrected} corrected
+        (${Math.round(stats.affirm_rate * 100)}% affirm rate)
+      </div>
+    `;
+  } catch (e) {
+    evalEl.innerHTML = "<div class='mirror-empty'>Couldn't load right now.</div>";
+  }
 }
 
 function closeDashboard() {
