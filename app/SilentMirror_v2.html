@@ -305,6 +305,14 @@
   .mode-option:hover { background: var(--purple-l); }
   .mode-option.pinned { color: var(--purple); font-weight: 600; }
 
+  .msg-feedback { display: flex; gap: 6px; margin: 4px 0 0 40px; }
+  .fb-btn {
+    font-size: 10.5px; padding: 2px 9px; border-radius: 10px; cursor: pointer;
+    border: 1px solid var(--purple-mid); background: none; color: var(--text3);
+  }
+  .fb-btn:hover { background: var(--purple-l); color: var(--purple); }
+  .fb-done { font-size: 10.5px; color: var(--text3); font-style: italic; margin-left: 40px; }
+
   #mirror-dashboard {
     display: none; position: fixed; inset: 0; background: var(--bg);
     z-index: 50; overflow-y: auto; padding: 20px;
@@ -442,6 +450,7 @@
 
   <div id="journal-bar">
     <button id="journal-toggle" onclick="toggleJournal()">+ Add a journal entry</button>
+    <button id="save-session-toggle" onclick="openSaveSession()">+ Save this conversation</button>
     <div id="journal-area">
       <textarea id="journal-input" placeholder="Write freely — this stays with your record..."></textarea>
       <div id="journal-actions">
@@ -560,8 +569,35 @@ function addMsg(role, text) {
   bubble.textContent = text;
   div.appendChild(av);
   div.appendChild(bubble);
+
+  if (role === "assistant") {
+    const fb = document.createElement("div");
+    fb.className = "msg-feedback";
+    fb.innerHTML = `
+      <button class="fb-btn" data-r="yes">Accurate</button>
+      <button class="fb-btn" data-r="no">Not quite</button>
+    `;
+    fb.querySelectorAll(".fb-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        submitReflectionFeedback(text, btn.dataset.r);
+        fb.innerHTML = "<span class='fb-done'>Thanks — noted.</span>";
+      });
+    });
+    div.appendChild(fb);
+  }
+
   messagesEl.appendChild(div);
   messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+async function submitReflectionFeedback(reflectionText, response) {
+  try {
+    await fetch(BACKEND + "/reflection-feedback", {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ user_id: userId, reflection: reflectionText, response })
+    });
+  } catch (e) {}
 }
 
 function addTyping() {
@@ -686,6 +722,13 @@ function toggleJournal() {
 function closeJournal() {
   document.getElementById("journal-area").classList.remove("open");
   document.getElementById("journal-input").value = "";
+}
+
+function openSaveSession() {
+  const bubbles = messagesEl.querySelectorAll(".bubble.sm");
+  const lastReply = bubbles.length ? bubbles[bubbles.length - 1].textContent : "";
+  saveText.textContent = lastReply.length > 200 ? lastReply.slice(0, 200) + "..." : lastReply;
+  saveBar.classList.add("visible");
 }
 
 async function saveJournal() {
