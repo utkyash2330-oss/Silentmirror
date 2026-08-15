@@ -7,3 +7,4 @@
 # SQLite files (should live on the Railway volume, not in git)
 *.db
 *.sqlite
+docs
