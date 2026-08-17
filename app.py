@@ -83,6 +83,7 @@ print("Database initialized.")
 
 SIG_TAG = re.compile(r'<sig category="([^"]+)">([^<]+)</sig>')
 MODE_TAG = re.compile(r'<mode>([^<]+)</mode>')
+SESSION_RECAP_TAG = re.compile(r'<session_recap></session_recap>')
 
 
 def load_history(user_id, limit=15):
@@ -183,7 +184,9 @@ def chat():
         observation.log_signal(user_id, category.strip(), live_mode, phrase.strip(), source="chat")
 
     reply = SIG_TAG.sub("", raw)
-    reply = MODE_TAG.sub("", reply).strip()
+    reply = MODE_TAG.sub("", reply)
+    is_summary = bool(SESSION_RECAP_TAG.search(reply))
+    reply = SESSION_RECAP_TAG.sub("", reply).strip()
     save_to_db(user_id, "assistant", reply)
 
     display_patterns = observation.get_active_patterns(user_id, min_tier="candidate")
@@ -192,7 +195,8 @@ def chat():
     return jsonify({
         "reply": reply,
         "pattern_count": len(display_patterns),
-        "mode": top_mode
+        "mode": top_mode,
+        "is_summary": is_summary
     })
 
 
@@ -432,6 +436,33 @@ def get_profile():
 
 # ---- privacy endpoints (Part 10 promises these existed only in prose before) ----
 
+@app.route("/data/export-db", methods=["GET"])
+def export_db_file():
+    """
+    Downloads the ACTUAL SQLite file — every table, exact fidelity, no
+    reconstruction needed. This is what you want for moving data to a
+    new deployment, not the JSON export below (which is per-user and
+    incomplete by design — good for a human-readable record, not a
+    real restore).
+    """
+    return send_file(DB_PATH, as_attachment=True, download_name="silentmirror_backup.db")
+
+
+@app.route("/data/import-db", methods=["POST"])
+def import_db_file():
+    """
+    Restores a previously downloaded .db file, overwriting whatever is
+    currently at DB_PATH. Use this on a FRESH deployment (new Railway
+    project, or a different host) to bring old data back exactly as it
+    was — every table, every row, no partial reconstruction.
+    """
+    if "file" not in request.files:
+        return jsonify({"error": "No file provided"}), 400
+    uploaded = request.files["file"]
+    uploaded.save(DB_PATH)
+    return jsonify({"status": "restored"})
+
+
 @app.route("/data/export", methods=["GET"])
 def export_data():
     user_id = request.args.get("user_id")
@@ -447,6 +478,12 @@ def export_data():
             "SELECT * FROM checkins WHERE user_id=?", (user_id,)).fetchall()],
         "saved_insights": [dict(r) for r in db.execute(
             "SELECT * FROM saved_insights WHERE user_id=?", (user_id,)).fetchall()],
+        "signals": [dict(r) for r in db.execute(
+            "SELECT * FROM signals WHERE user_id=?", (user_id,)).fetchall()],
+        "contradictions": [dict(r) for r in db.execute(
+            "SELECT * FROM contradictions WHERE user_id=?", (user_id,)).fetchall()],
+        "reflection_feedback": [dict(r) for r in db.execute(
+            "SELECT * FROM reflection_feedback WHERE user_id=?", (user_id,)).fetchall()],
     }
     db.close()
     return jsonify(out)
