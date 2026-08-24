@@ -19,7 +19,7 @@ Sources feeding signals:
 import sqlite3
 from datetime import datetime, timedelta
 
-DB_PATH = None  # set by app.py at import time via init(db_path)
+DB_PATH = None  #set by app.py at import time via init(db_path)
 
 
 def init(db_path: str):

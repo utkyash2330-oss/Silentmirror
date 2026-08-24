@@ -1,4 +1,5 @@
 # Silent Mirror
+Silent Mirror is a memory-augmented conversational AI system that combines an LLM with deterministic longitudinal pattern tracking, confidence tiers, user feedback and persistent memory.
 
 We make countless micro-decisions every day. Some seem insignificant, yet they can shape relationships, opportunities, and personal growth. These decisions are often influenced by the version of ourselves leading in that moment — calm, emotional, stressed, confident, or uncertain. In busy or vulnerable states, it isn't always clear whether we're thinking rationally, emotionally, or simply reacting to pressure. Looking back, greater self-awareness might have led us to make different choices.
 
