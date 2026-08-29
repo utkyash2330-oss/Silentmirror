@@ -25,21 +25,43 @@ GEMINI_MODEL = "gemini-2.0-flash"
 RATE_LIMIT_STATUS_CODES = {429, 503}
 
 
-def _is_rate_limit_error(exc: Exception) -> bool:
+def _is_fallback_worthy_error(exc: Exception) -> bool:
+    """
+    True for failures that mean 'this provider can't answer right now'
+    — rate limits, quota, AND the known gpt-oss empty-completion bug
+    (reasoning budget exhausted before any visible content). False for
+    genuine bugs that should surface as errors, not get silently masked
+    by switching providers.
+    """
     status = getattr(exc, "status_code", None)
     if status in RATE_LIMIT_STATUS_CODES:
         return True
     msg = str(exc).lower()
-    return any(kw in msg for kw in ["rate limit", "quota", "token limit", "resource_exhausted"])
+    return any(kw in msg for kw in [
+        "rate limit", "quota", "token limit", "resource_exhausted",
+        "empty completion",  # matches the RuntimeError raised in _call_groq
+    ])
 
 
 def _call_groq(system_prompt: str, messages: list, max_tokens: int) -> str:
     response = groq_client.chat.completions.create(
         model=GROQ_MODEL,
         max_tokens=max_tokens,
+        # gpt-oss-120b is a reasoning model — it spends tokens on hidden
+        # chain-of-thought before the visible answer. "low" keeps that
+        # spend small so max_tokens isn't eaten before real content
+        # appears. This is a known Groq-documented behavior, not a guess.
+        reasoning_effort="low",
         messages=[{"role": "system", "content": system_prompt}, *messages]
     )
-    return response.choices[0].message.content
+    content = response.choices[0].message.content
+    if not content or not content.strip():
+        # Known gpt-oss failure mode: reasoning consumed the whole
+        # budget, leaving nothing visible, even with low effort. Treat
+        # this as a real failure so the router can fall back to Gemini,
+        # rather than silently returning an empty reply to the user.
+        raise RuntimeError("Groq returned an empty completion (likely reasoning budget exhausted)")
+    return content
 
 
 def _call_gemini(system_prompt: str, messages: list, max_tokens: int) -> str:
@@ -74,7 +96,7 @@ def get_completion(system_prompt: str, messages: list, max_tokens: int = 250) ->
     try:
         return _call_groq(system_prompt, messages, max_tokens), "groq"
     except (GroqAPIStatusError, Exception) as e:
-        if not _is_rate_limit_error(e):
+        if not _is_fallback_worthy_error(e):
             raise  # real bug — don't mask it by silently switching providers
         try:
             return _call_gemini(system_prompt, messages, max_tokens), "gemini"

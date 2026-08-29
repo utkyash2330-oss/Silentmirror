@@ -218,7 +218,7 @@ def chat():
     full_system = SYSTEM_PROMPT + context_block
 
     try:
-        raw, provider = llm_router.get_completion(full_system, history, max_tokens=300)
+        raw, provider = llm_router.get_completion(full_system, history, max_tokens=700)
     except RuntimeError as e:
         return jsonify({"error": "Both models are currently unavailable. Please try again shortly."}), 503
 
