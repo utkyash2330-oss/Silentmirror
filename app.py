@@ -171,7 +171,18 @@ def load_saved_summaries(user_id, limit=3):
 @app.route("/", methods=["GET"])
 def index():
     html_path = os.path.join(os.path.dirname(__file__), "app", "SilentMirror_v2.html")
-    return send_file(html_path)
+    with open(html_path, "r", encoding="utf-8") as f:
+        html = f.read()
+    # The committed file contains only the placeholder token below —
+    # the real secret exists ONLY in Railway's environment variable and
+    # is injected fresh into the page on every request. This means the
+    # real secret is never typed into any file that gets committed to
+    # git, ever again — not a manual step to remember, a structural fix.
+    html = html.replace(
+        'const SM_AUTH = "PASTE_YOUR_SM_SHARED_SECRET_HERE";',
+        f'const SM_AUTH = "{auth.SHARED_SECRET or ""}";'
+    )
+    return html
 
 
 @app.route("/routes")
