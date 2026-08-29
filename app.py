@@ -3,6 +3,17 @@ from flask_cors import CORS
 import sqlite3
 import re
 import os
+import time
+from collections import defaultdict, deque
+from dotenv import load_dotenv
+
+# Loads .env into the real environment for LOCAL development. On
+# Railway (or any platform where you set real environment variables
+# directly), this does nothing — those are already in os.environ
+# before Python even starts, so there's no .env file to find, and
+# this call just silently no-ops. Must run before importing anything
+# that reads os.environ at import time (auth.py, llm_router.py).
+load_dotenv()
 
 import auth
 import observation
@@ -15,6 +26,33 @@ app = Flask(__name__)
 CORS(app)
 
 observation.init(DB_PATH)
+
+# Simple per-IP rate limit on /chat, the only route that costs real
+# money per call. In-memory is fine here since Procfile runs a single
+# gunicorn worker — state stays consistent across requests. Resets on
+# redeploy, which is an acceptable tradeoff at this scale.
+# Rate limit is YOUR choice as the deployer, not a fixed rule — set it
+# based on your own API plan (Groq/Gemini free tiers, paid tiers, etc).
+# Defaults are conservative for a free-tier key. Set SM_CHAT_RATE_LIMIT=0
+# to disable rate limiting entirely — reasonable if you're the only
+# user, or you're confident in your own API plan's own limits.
+CHAT_RATE_LIMIT = int(os.environ.get("SM_CHAT_RATE_LIMIT", "20"))
+CHAT_RATE_WINDOW = int(os.environ.get("SM_CHAT_RATE_WINDOW_SECONDS", "3600"))
+_chat_request_log = defaultdict(deque)
+
+
+def check_chat_rate_limit(ip):
+    if CHAT_RATE_LIMIT <= 0:
+        return True  # explicitly disabled by the deployer
+
+    now = time.time()
+    log = _chat_request_log[ip]
+    while log and now - log[0] > CHAT_RATE_WINDOW:
+        log.popleft()
+    if len(log) >= CHAT_RATE_LIMIT:
+        return False
+    log.append(now)
+    return True
 
 
 # ---- central auth hook: runs before every request, no route can skip it ----
@@ -72,6 +110,12 @@ def init_db():
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""")
+    db.execute("""CREATE TABLE IF NOT EXISTS hobbies (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id TEXT,
+        name TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )""")
     db.commit()
     db.close()
     observation.init_signals_table()
@@ -84,6 +128,11 @@ print("Database initialized.")
 SIG_TAG = re.compile(r'<sig category="([^"]+)">([^<]+)</sig>')
 MODE_TAG = re.compile(r'<mode>([^<]+)</mode>')
 SESSION_RECAP_TAG = re.compile(r'<session_recap></session_recap>')
+# Safety net: catches a tag that got cut off mid-generation (truncation
+# near max_tokens) before its closing tag — the tags above only match
+# fully-closed tags, so a truncated one would otherwise leak raw text
+# straight into the user-visible reply.
+TRAILING_INCOMPLETE_TAG = re.compile(r'<(sig|mode|session_recap)\b[^>]*$')
 
 
 def load_history(user_id, limit=15):
@@ -132,6 +181,9 @@ def routes():
 
 @app.route("/chat", methods=["POST"])
 def chat():
+    if not check_chat_rate_limit(request.remote_addr):
+        return jsonify({"error": "Rate limit reached. Please try again later."}), 429
+
     data = request.json
     user_id = data.get("user_id")
     message = data.get("message", "")
@@ -186,7 +238,8 @@ def chat():
     reply = SIG_TAG.sub("", raw)
     reply = MODE_TAG.sub("", reply)
     is_summary = bool(SESSION_RECAP_TAG.search(reply))
-    reply = SESSION_RECAP_TAG.sub("", reply).strip()
+    reply = SESSION_RECAP_TAG.sub("", reply)
+    reply = TRAILING_INCOMPLETE_TAG.sub("", reply).strip()
     save_to_db(user_id, "assistant", reply)
 
     display_patterns = observation.get_active_patterns(user_id, min_tier="candidate")
@@ -405,6 +458,51 @@ def delete_insight(insight_id):
     return jsonify({"status": "deleted"})
 
 
+# ---- Hobbies: declared, reactive-only awareness (never mood-triggered) ----
+
+@app.route("/hobbies", methods=["GET"])
+def list_hobbies():
+    user_id = request.args.get("user_id")
+    db = get_db()
+    rows = db.execute(
+        "SELECT * FROM hobbies WHERE user_id=? ORDER BY created_at DESC", (user_id,)
+    ).fetchall()
+    db.close()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route("/hobbies", methods=["POST"])
+def add_hobby():
+    data = request.json
+    user_id = data.get("user_id")
+    name = data.get("name", "").strip()
+    if not user_id or not name:
+        return jsonify({"error": "Missing user_id or name"}), 400
+
+    db = get_db()
+    db.execute("INSERT INTO hobbies (user_id, name) VALUES (?, ?)", (user_id, name))
+    db.commit()
+    db.close()
+    return jsonify({"status": "added"})
+
+
+@app.route("/hobbies/<int:hobby_id>", methods=["DELETE"])
+def delete_hobby(hobby_id):
+    user_id = request.args.get("user_id")
+    db = get_db()
+    owned = db.execute(
+        "SELECT id FROM hobbies WHERE id=? AND user_id=?", (hobby_id, user_id)
+    ).fetchone()
+    if not owned:
+        db.close()
+        return jsonify({"error": "Not found"}), 404
+
+    db.execute("DELETE FROM hobbies WHERE id=? AND user_id=?", (hobby_id, user_id))
+    db.commit()
+    db.close()
+    return jsonify({"status": "deleted"})
+
+
 @app.route("/profile", methods=["GET"])
 def get_profile():
     user_id = request.args.get("user_id")
@@ -484,6 +582,8 @@ def export_data():
             "SELECT * FROM contradictions WHERE user_id=?", (user_id,)).fetchall()],
         "reflection_feedback": [dict(r) for r in db.execute(
             "SELECT * FROM reflection_feedback WHERE user_id=?", (user_id,)).fetchall()],
+        "hobbies": [dict(r) for r in db.execute(
+            "SELECT * FROM hobbies WHERE user_id=?", (user_id,)).fetchall()],
     }
     db.close()
     return jsonify(out)
@@ -495,7 +595,7 @@ def reset_data():
     db = get_db()
     for table in ["history", "saved_summaries", "journal", "checkins",
                   "reflection_feedback", "signals", "contradictions", "users",
-                  "saved_insights"]:
+                  "saved_insights", "hobbies"]:
         db.execute(f"DELETE FROM {table} WHERE user_id=?", (user_id,))
     db.commit()
     db.close()

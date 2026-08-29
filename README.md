@@ -78,6 +78,31 @@ Silent Mirror has been tested against its own failure modes deliberately, not ju
 
 ---
 
+## Deploy Your Own Copy
+
+Anyone can self-host Silent Mirror using their own API keys and their own deployment — your data and API costs
+stay entirely on your own account, never touching the original author's.
+
+**1. Clone the repo**, then copy `.env.example` to `.env` and fill in:
+- `GROQ_API_KEY` — free at [console.groq.com/keys](https://console.groq.com/keys)
+- `GEMINI_API_KEY` — free at [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
+- `SM_SHARED_SECRET` — generate your own: `python3 -c "import secrets; print(secrets.token_hex(32))"`
+
+**2. Deploy** to Railway, Render, or any host that supports a persistent volume + Python:
+- Set the same three variables as real environment variables on your platform
+- Mount a persistent volume at `/data` if your platform supports it (recommended — without it, your database resets on every redeploy)
+- Update `SM_AUTH` in `SilentMirror_v2.html` to match your own `SM_SHARED_SECRET`
+
+**3. Access mode** — by default your instance is **private**: every route requires your secret, same as a personal
+single-user setup. If you want your own deployment to be usable by the public (like a live demo), set
+`SM_ACCESS_MODE=public` — this opens ordinary use to any visitor while keeping the two whole-database routes
+(`/data/export-db`, `/data/import-db`) locked to you alone. Only enable this deliberately; read the code in
+`auth.py` first so you understand exactly what it changes.
+
+That's it — your instance, your keys, your data, completely independent of the original.
+
+---
+
 ## Roadmap
 
 - **Phase 2a** — embedding-based semantic retrieval, replacing pure recency with relevance

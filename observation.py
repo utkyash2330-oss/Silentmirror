@@ -19,7 +19,7 @@ Sources feeding signals:
 import sqlite3
 from datetime import datetime, timedelta
 
-DB_PATH = None  #set by app.py at import time via init(db_path)
+DB_PATH = None  # set by app.py at import time via init(db_path)
 
 
 def init(db_path: str):
@@ -150,11 +150,18 @@ def get_evaluation_stats(user_id):
     """
     Real, computed proxy metrics — not hypothetical. Turns the
     affirm/correct rate discussed as an evaluation strategy into an
-    actual number, drawn from reflection_feedback.
+    actual number, drawn from reflection_feedback. Also returns the
+    underlying rows so a user can see exactly which reflections were
+    responded to, not just an aggregate count.
     """
     db = get_db()
     rows = db.execute(
         "SELECT response, COUNT(*) as c FROM reflection_feedback WHERE user_id=? GROUP BY response",
+        (user_id,)
+    ).fetchall()
+    history = db.execute(
+        """SELECT reflection_text, response, created_at FROM reflection_feedback
+           WHERE user_id=? ORDER BY created_at DESC""",
         (user_id,)
     ).fetchall()
     db.close()
@@ -169,6 +176,7 @@ def get_evaluation_stats(user_id):
         "affirmed": affirmed,
         "corrected": corrected,
         "affirm_rate": round(affirmed / total, 2) if total > 0 else None,
+        "history": [dict(r) for r in history],
     }
 
 
@@ -262,6 +270,19 @@ def get_recent_journal_entries(user_id, limit=3):
     return [r["entry"] for r in rows]
 
 
+def get_hobbies(user_id):
+    """
+    Declared hobby list. Included in context for awareness only — the
+    prompt explicitly forbids surfacing these unprompted (see prompts.py).
+    Storage here is identical in spirit to saved insights: user-owned,
+    never auto-decays.
+    """
+    db = get_db()
+    rows = db.execute("SELECT name FROM hobbies WHERE user_id=?", (user_id,)).fetchall()
+    db.close()
+    return [r["name"] for r in rows]
+
+
 def format_context_for_prompt(user_id, min_tier="eligible"):
     """
     Produces the plain-text block that goes into the prompt's
@@ -277,6 +298,10 @@ def format_context_for_prompt(user_id, min_tier="eligible"):
     journal_entries = get_recent_journal_entries(user_id)
     for entry in journal_entries:
         lines.append(f"- (recent journal entry, verbatim, no tier): {entry}")
+
+    hobbies = get_hobbies(user_id)
+    if hobbies:
+        lines.append(f"- (declared hobbies, awareness only, never bring up unprompted): {', '.join(hobbies)}")
 
     patterns = get_active_patterns(user_id, min_tier=min_tier)
     for p in patterns:

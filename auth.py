@@ -1,49 +1,64 @@
 """
-Silent Mirror — Auth (v1, personal-use tier)
+Silent Mirror — Auth (v3, configurable access mode)
 
-Single shared secret, checked in ONE place via Flask's before_request hook.
-This is intentionally NOT full multi-user auth (no password hashing, no
-sessions, no per-user accounts) — that's over-engineering for a solo,
-non-public deployment. This closes the actual current gap: anyone who
-finds the URL and guesses/knows a user_id can currently read or write
-that user's private data with zero proof of identity.
+Two modes, controlled by SM_ACCESS_MODE:
 
-HARD GATE: before this app is shared with even one other person, this
-must be upgraded to real per-user auth (hashed passwords + sessions, or
-OAuth). Do not skip that step when this stops being personal-only.
+- "private" (DEFAULT — used if the var is unset): every route requires
+  SM_SHARED_SECRET, same as the original single-user design. This is
+  the safe default for anyone who clones this repo and deploys their
+  own copy — you should have to deliberately opt into public access,
+  not stumble into it.
+
+- "public": only the two whole-database routes (/data/export-db,
+  /data/import-db) require the secret. Ordinary use (chat, journal,
+  insights) is open to any visitor. Only set this if you deliberately
+  want a public-facing demo of your own deployment — see the README
+  before enabling.
+
+A single shared secret can't mean both "legitimate user" and "owner"
+at once — that's why "public" mode narrows what the secret protects,
+rather than trying to hide it from visitors who are meant to use the
+app anyway.
 """
 
 import os
 import secrets
-from functools import wraps
 from flask import request, jsonify
 
-# Set this in your environment (Railway/local .env), never hardcode it.
 SHARED_SECRET = os.environ.get("SM_SHARED_SECRET")
+ACCESS_MODE = os.environ.get("SM_ACCESS_MODE", "private").strip().lower()
 
-# Routes that don't require the secret (health checks, static index page)
-PUBLIC_PATHS = {"/", "/routes"}
+PUBLIC_PATHS_ALWAYS = {"/", "/routes"}  # never gated, in either mode
+OWNER_ONLY_PATHS = {"/data/export-db", "/data/import-db"}  # always gated, in either mode
+
+
+def _secret_matches(provided: str) -> bool:
+    if not SHARED_SECRET:
+        return False
+    return secrets.compare_digest(provided, SHARED_SECRET)
 
 
 def check_auth():
     """
     Called from a single before_request hook in app.py.
-    Returns None if the request is authorized, or a Flask response
-    (401) if it is not. Centralizing this means no future route can
-    forget to add the check individually.
+    Returns None if authorized, or a Flask response (401/500) if not.
     """
-    if request.path in PUBLIC_PATHS:
+    if request.path in PUBLIC_PATHS_ALWAYS:
+        return None
+
+    if ACCESS_MODE == "public":
+        needs_secret = request.path in OWNER_ONLY_PATHS
+    else:
+        needs_secret = True  # private mode: everything else is gated
+
+    if not needs_secret:
         return None
 
     if not SHARED_SECRET:
-        # Fail closed, not open — if the secret isn't configured,
-        # refuse everything rather than silently allowing all requests.
         return jsonify({"error": "Server auth not configured"}), 500
 
     provided = request.headers.get("X-SM-Auth", "")
-
-    # constant-time comparison — avoids leaking the secret via timing
-    if not secrets.compare_digest(provided, SHARED_SECRET):
+    if not _secret_matches(provided):
         return jsonify({"error": "Unauthorized"}), 401
 
     return None
