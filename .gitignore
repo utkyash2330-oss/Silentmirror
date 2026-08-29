@@ -1,10 +1,5 @@
-# Add these lines to your existing .gitignore
-
-# Never commit real prompt text or secrets
+__pycache__/
+docs/
 .env
-*.local.py
-
-# SQLite files (should live on the Railway volume, not in git)
+.venv/
 *.db
-*.sqlite
-docs
