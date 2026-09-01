@@ -146,6 +146,25 @@ def _recent_contradiction_strength(db, user_id, category, mode):
     return "soft"
 
 
+def get_mode_activity(user_id):
+    """
+    Real, computed count of active signals per mode — a genuine measure
+    of where interaction has actually concentrated, not a guess. This
+    answers 'which category has SM seen the most of' directly from
+    counted data, same principle as the tier system: no inference, no
+    fabricated ranking, just what's actually in the table.
+    """
+    db = get_db()
+    rows = db.execute(
+        """SELECT mode, COUNT(*) as c FROM signals
+           WHERE user_id=? AND status='active'
+           GROUP BY mode ORDER BY c DESC""",
+        (user_id,)
+    ).fetchall()
+    db.close()
+    return [{"mode": r["mode"], "count": r["c"]} for r in rows]
+
+
 def get_evaluation_stats(user_id):
     """
     Real, computed proxy metrics — not hypothetical. Turns the

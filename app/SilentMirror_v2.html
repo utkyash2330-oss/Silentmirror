@@ -73,7 +73,8 @@
     border-bottom: 0.5px solid var(--border);
   }
 
-  #header-left { display: flex; align-items: center; gap: 10px; }
+  #header-left { display: flex; align-items: center; gap: 10px; overflow-x: auto; scrollbar-width: thin; }
+  #header-left::-webkit-scrollbar { height: 3px; }
   #logo-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--purple-m); }
   #logo-text { font-size: 13px; font-weight: 500; color: var(--text); letter-spacing: 0.03em; }
   #mode-badge {
@@ -404,6 +405,9 @@
       <h2>My Mirror</h2>
       <button id="mirror-close-btn" onclick="closeDashboard()">&times;</button>
     </div>
+
+    <div class="mirror-section-title">Category Activity</div>
+    <div id="mirror-activity"></div>
 
     <div class="mirror-section-title">Evaluation</div>
     <div id="mirror-eval" class="mirror-card"></div>
@@ -763,19 +767,20 @@ document.getElementById("save-yes").onclick = async () => {
   saveBar.classList.remove("visible");
 
   try {
-    await fetch(BACKEND + "/save", {
+    await fetch(BACKEND + "/insights", {
       method: "POST",
       headers: authHeaders(),
       body: JSON.stringify({
         user_id: userId,
+        category: "conversation_summary",
         mode: currentMode,
-        topic: "session summary",
-        summary: saveText.textContent
+        text: saveText.textContent,
+        tier: "manual"
       })
     });
   } catch (e) {}
 
-  addMsg("assistant", "Saved. It will be there when you need it.");
+  addMsg("assistant", "Saved to My Mirror — you'll find it under Saved Insights.");
 };
 
 document.getElementById("save-no").onclick = () => {
@@ -837,7 +842,33 @@ const savedEl = document.getElementById("mirror-saved");
 
 async function openDashboard() {
   dashboardEl.classList.add("visible");
-  await Promise.all([loadEvalStats(), loadCandidates(), loadSavedInsights(), loadHobbies()]);
+  await Promise.all([loadActivity(), loadEvalStats(), loadCandidates(), loadSavedInsights(), loadHobbies()]);
+}
+
+async function loadActivity() {
+  const el = document.getElementById("mirror-activity");
+  el.innerHTML = "<div class='mirror-empty'>Loading...</div>";
+  try {
+    const res = await fetch(BACKEND + "/mode-activity?user_id=" + userId, { headers: authHeaders() });
+    const list = await res.json();
+    if (!list.length) {
+      el.innerHTML = "<div class='mirror-empty'>Not enough activity yet to show a breakdown.</div>";
+      return;
+    }
+    const top = list[0].mode;
+    el.innerHTML = `
+      <div class="mirror-card">
+        ${list.map(m => `
+          <div style="display:flex; justify-content:space-between; padding:4px 0;">
+            <span>${escapeHtml(m.mode)}${m.mode === top ? " (most active)" : ""}</span>
+            <span style="color:var(--text3);">${m.count} signal${m.count !== 1 ? "s" : ""}</span>
+          </div>
+        `).join("")}
+      </div>
+    `;
+  } catch (e) {
+    el.innerHTML = "<div class='mirror-empty'>Couldn't load right now.</div>";
+  }
 }
 
 async function loadHobbies() {
@@ -996,15 +1027,28 @@ async function loadSavedInsights() {
       return;
     }
 
-    savedEl.innerHTML = list.map(i => `
-      <div class="mirror-card" id="insight-${i.id}">
-        <div class="mirror-card-tag">${escapeHtml(i.mode)} · ${escapeHtml(i.category)}</div>
-        <div class="mirror-card-text">${escapeHtml(i.user_text)}</div>
-        <div class="mirror-card-actions">
-          <button onclick="toggleEdit(${i.id})">Customize</button>
-          <button class="danger" onclick="deleteInsight(${i.id})">Delete</button>
-        </div>
+    // Group by mode so Study, Health, General, etc. are visually
+    // separated, instead of one undifferentiated list.
+    const grouped = {};
+    list.forEach(i => {
+      if (!grouped[i.mode]) grouped[i.mode] = [];
+      grouped[i.mode].push(i);
+    });
+
+    savedEl.innerHTML = Object.keys(grouped).sort().map(mode => `
+      <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.04em; color:var(--purple); margin:14px 0 6px;">
+        ${escapeHtml(mode)}
       </div>
+      ${grouped[mode].map(i => `
+        <div class="mirror-card" id="insight-${i.id}">
+          <div class="mirror-card-tag">${escapeHtml(i.category)}</div>
+          <div class="mirror-card-text">${escapeHtml(i.user_text)}</div>
+          <div class="mirror-card-actions">
+            <button onclick="toggleEdit(${i.id})">Customize</button>
+            <button class="danger" onclick="deleteInsight(${i.id})">Delete</button>
+          </div>
+        </div>
+      `).join("")}
     `).join("");
   } catch (e) {
     savedEl.innerHTML = "<div class='mirror-empty'>Couldn't load right now.</div>";
