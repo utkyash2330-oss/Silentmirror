@@ -114,15 +114,18 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id TEXT,
         name TEXT,
-        setting_type TEXT DEFAULT 'any',  -- 'indoor', 'outdoor', or 'any' —
-                                           -- a declared fact, not a guess.
-                                           -- Lets the model match a hobby
-                                           -- to a stated constraint (e.g.
-                                           -- "it's raining") without
-                                           -- needing to know anything
-                                           -- about the real world itself.
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""")
+    # Migration: CREATE TABLE IF NOT EXISTS above is a no-op on a
+    # database that already has this table from an earlier deploy — it
+    # will NOT add new columns to an existing table. This explicitly
+    # adds setting_type for anyone upgrading from before it existed.
+    # Safe to run every startup: SQLite errors on a duplicate column,
+    # which we just ignore.
+    try:
+        db.execute("ALTER TABLE hobbies ADD COLUMN setting_type TEXT DEFAULT 'any'")
+    except sqlite3.OperationalError:
+        pass  # column already exists — expected on every run after the first
     db.commit()
     db.close()
     observation.init_signals_table()

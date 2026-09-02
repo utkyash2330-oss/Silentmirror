@@ -906,14 +906,22 @@ async function addHobby() {
   const name = input.value.trim();
   if (!name) return;
   try {
-    await fetch(BACKEND + "/hobbies", {
+    const res = await fetch(BACKEND + "/hobbies", {
       method: "POST",
       headers: authHeaders(),
       body: JSON.stringify({ user_id: userId, name, setting_type: settingEl.value })
     });
+    if (!res.ok) {
+      document.getElementById("mirror-hobbies").innerHTML =
+        "<div class='mirror-empty'>Couldn't add that hobby — try again.</div>";
+      return;
+    }
     input.value = "";
     await loadHobbies();
-  } catch (e) {}
+  } catch (e) {
+    document.getElementById("mirror-hobbies").innerHTML =
+      "<div class='mirror-empty'>Couldn't add that hobby — try again.</div>";
+  }
 }
 
 async function deleteHobby(id) {
