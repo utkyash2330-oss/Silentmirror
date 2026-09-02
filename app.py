@@ -114,6 +114,13 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id TEXT,
         name TEXT,
+        setting_type TEXT DEFAULT 'any',  -- 'indoor', 'outdoor', or 'any' —
+                                           -- a declared fact, not a guess.
+                                           -- Lets the model match a hobby
+                                           -- to a stated constraint (e.g.
+                                           -- "it's raining") without
+                                           -- needing to know anything
+                                           -- about the real world itself.
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""")
     db.commit()
@@ -229,7 +236,7 @@ def chat():
     full_system = SYSTEM_PROMPT + context_block
 
     try:
-        raw, provider = llm_router.get_completion(full_system, history, max_tokens=800)
+        raw, provider = llm_router.get_completion(full_system, history, max_tokens=700)
     except RuntimeError as e:
         return jsonify({"error": "Both models are currently unavailable. Please try again shortly."}), 503
 
@@ -359,6 +366,12 @@ def get_journal():
 
 # ---- My Mirror dashboard: saved/curated insights ----
 
+@app.route("/mode-activity", methods=["GET"])
+def get_mode_activity():
+    user_id = request.args.get("user_id")
+    return jsonify(observation.get_mode_activity(user_id))
+
+
 @app.route("/evaluation", methods=["GET"])
 def get_evaluation():
     user_id = request.args.get("user_id")
@@ -487,11 +500,17 @@ def add_hobby():
     data = request.json
     user_id = data.get("user_id")
     name = data.get("name", "").strip()
+    setting_type = data.get("setting_type", "any").strip().lower()
+    if setting_type not in ("indoor", "outdoor", "any"):
+        setting_type = "any"
     if not user_id or not name:
         return jsonify({"error": "Missing user_id or name"}), 400
 
     db = get_db()
-    db.execute("INSERT INTO hobbies (user_id, name) VALUES (?, ?)", (user_id, name))
+    db.execute(
+        "INSERT INTO hobbies (user_id, name, setting_type) VALUES (?, ?, ?)",
+        (user_id, name, setting_type)
+    )
     db.commit()
     db.close()
     return jsonify({"status": "added"})

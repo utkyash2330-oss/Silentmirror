@@ -416,6 +416,11 @@
     <div id="mirror-hobbies"></div>
     <div style="display:flex; gap:8px; margin-top:8px;">
       <input id="hobby-input" placeholder="Add a hobby..." style="flex:1; background:var(--bg3); border:1px solid var(--purple-mid); border-radius:8px; padding:6px 10px; color:var(--text); font-size:13px;">
+      <select id="hobby-setting" style="background:var(--bg3); border:1px solid var(--purple-mid); border-radius:8px; padding:6px 8px; color:var(--text); font-size:12px;">
+        <option value="any">Any</option>
+        <option value="indoor">Indoor</option>
+        <option value="outdoor">Outdoor</option>
+      </select>
       <button class="mirror-nav-btn" onclick="addHobby()">Add</button>
     </div>
 
@@ -883,6 +888,7 @@ async function loadHobbies() {
     }
     el.innerHTML = list.map(h => `
       <div class="mirror-card">
+        <div class="mirror-card-tag">${escapeHtml(h.setting_type || "any")}</div>
         <div class="mirror-card-text">${escapeHtml(h.name)}</div>
         <div class="mirror-card-actions">
           <button class="danger" onclick="deleteHobby(${h.id})">Delete</button>
@@ -896,13 +902,14 @@ async function loadHobbies() {
 
 async function addHobby() {
   const input = document.getElementById("hobby-input");
+  const settingEl = document.getElementById("hobby-setting");
   const name = input.value.trim();
   if (!name) return;
   try {
     await fetch(BACKEND + "/hobbies", {
       method: "POST",
       headers: authHeaders(),
-      body: JSON.stringify({ user_id: userId, name })
+      body: JSON.stringify({ user_id: userId, name, setting_type: settingEl.value })
     });
     input.value = "";
     await loadHobbies();
