@@ -229,8 +229,27 @@ def chat():
     computed_facts = observation.format_context_for_prompt(user_id, min_tier="eligible")
     summaries = load_saved_summaries(user_id)
 
+    # Turn-specific nudge: the general HOBBIES rule in the prompt has
+    # been inconsistently followed by Llama in real testing even when
+    # correctly written. Rather than keep hardening the standing rule
+    # indefinitely, detect this specific, recurring case server-side
+    # and inject a concrete directive just for this turn.
+    suggestion_directive = ""
+    if observation.is_suggestion_request(message):
+        hobbies = observation.get_hobbies(user_id)
+        if hobbies:
+            hobby_list = ", ".join(f"{h['name']} ({h['setting_type']})" for h in hobbies)
+            suggestion_directive = (
+                f"\n\nTHIS TURN: the user is directly asking for a suggestion. "
+                f"Their declared hobbies are: {hobby_list}. Name the relevant one "
+                f"specifically in your reply, matching its setting to any stated "
+                f"constraint (weather, time) — don't default to a generic activity "
+                f"when a real declared hobby fits."
+            )
+
     context_parts = [p for p in [summaries, computed_facts] if p]
     context_block = build_context_block("\n\n".join(context_parts)) if context_parts else ""
+    context_block += suggestion_directive
 
     history = load_history(user_id)
     history.append({"role": "user", "content": message})

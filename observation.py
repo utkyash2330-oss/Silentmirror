@@ -289,6 +289,29 @@ def get_recent_journal_entries(user_id, limit=3):
     return [r["entry"] for r in rows]
 
 
+SUGGESTION_TRIGGERS = [
+    "what should i do", "what shall i do", "what can i do",
+    "any suggestion", "suggest me", "give me a suggestion",
+    "what should i work on", "what to do now", "help me decide",
+    "any idea what i should", "any advice on what",
+]
+
+
+def is_suggestion_request(message: str) -> bool:
+    """
+    Cheap, deterministic check — not another LLM call. This is a
+    heuristic, not perfect intent detection: it can miss genuine
+    requests phrased unusually, and it can't understand nuance the way
+    a model can. It exists specifically because the general prompt
+    rule for this case has been inconsistently followed by Llama across
+    repeated real tests — this gives the model a concrete, turn-specific
+    nudge instead of relying solely on a standing rule competing with
+    several others in the same prompt.
+    """
+    msg = message.lower()
+    return any(trigger in msg for trigger in SUGGESTION_TRIGGERS)
+
+
 def get_hobbies(user_id):
     """
     Declared hobby list, each with a declared setting_type (indoor/
