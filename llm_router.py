@@ -43,66 +43,71 @@ def _is_fallback_worthy_error(exc: Exception) -> bool:
     ])
 
 
-def _call_groq(system_prompt: str, messages: list, max_tokens: int) -> str:
-    response = groq_client.chat.completions.create(
-        model=GROQ_MODEL,
-        max_tokens=max_tokens,
-        # gpt-oss-120b is a reasoning model — it spends tokens on hidden
-        # chain-of-thought before the visible answer. "low" keeps that
-        # spend small so max_tokens isn't eaten before real content
-        # appears. This is a known Groq-documented behavior, not a guess.
-        reasoning_effort="low",
-        messages=[{"role": "system", "content": system_prompt}, *messages]
-    )
-    content = response.choices[0].message.content
-    if not content or not content.strip():
-        # Known gpt-oss failure mode: reasoning consumed the whole
-        # budget, leaving nothing visible, even with low effort. Treat
-        # this as a real failure so the router can fall back to Gemini,
-        # rather than silently returning an empty reply to the user.
-        raise RuntimeError("Groq returned an empty completion (likely reasoning budget exhausted)")
-    return content
-
-
-def _call_gemini(system_prompt: str, messages: list, max_tokens: int) -> str:
-    # Gemini uses role "model" instead of "assistant", and a
-    # contents-of-parts structure instead of OpenAI-style messages.
-    contents = []
-    for m in messages:
-        role = "model" if m["role"] == "assistant" else "user"
-        contents.append(genai_types.Content(
-            role=role,
-            parts=[genai_types.Part(text=m["content"])]
-        ))
-
-    response = gemini_client.models.generate_content(
-        model=GEMINI_MODEL,
-        contents=contents,
-        config=genai_types.GenerateContentConfig(
-            system_instruction=system_prompt,
-            max_output_tokens=max_tokens
-        )
-    )
-    return response.text
-
-
-def get_completion(system_prompt: str, messages: list, max_tokens: int = 250) -> tuple[str, str]:
+def get_completion(
+    system_prompt: str,
+    messages: list,
+    max_tokens: int = 250
+) -> tuple[str, str]:
     """
-    Returns (reply_text, provider_used) so callers/logs can tell which
-    model actually answered. Tries Groq first; falls back to Gemini only
-    on rate-limit/quota-style failures, not on every error (a real bug in
-    the request should surface, not silently retry on a different model).
+    Returns (reply_text, provider_used).
+
+    Tries Gemini first; falls back to Groq only on
+    rate-limit/quota-style failures.
     """
+
     try:
-        return _call_groq(system_prompt, messages, max_tokens), "groq"
-    except (GroqAPIStatusError, Exception) as e:
+        # Primary provider
+        return _call_gemini(
+            system_prompt,
+            messages,
+            max_tokens
+        ), "gemini"
+
+    except Exception as e:
+        # Only fallback for errors that are safe to retry
         if not _is_fallback_worthy_error(e):
-            raise  # real bug — don't mask it by silently switching providers
+            raise
+
         try:
-            return _call_gemini(system_prompt, messages, max_tokens), "gemini"
-        except Exception as gemini_error:
-            # both providers down — let this raise up to the /chat route,
-            # which should return a clear error rather than a fake reply
+            # Fallback provider
+            return _call_groq(
+                system_prompt,
+                messages,
+                max_tokens
+            ), "groq"
+
+        except Exception as groq_error:
+            # Both providers failed
             raise RuntimeError(
-                f"Both providers failed. Groq: {e} | Gemini: {gemini_error}"
-            ) from gemini_error
+                f"Both providers failed. "
+                f"Gemini: {e} | Groq: {groq_error}"
+            ) from groq_error
+
+
+def get_completion(
+    system_prompt: str,
+    messages: list,
+    max_tokens: int = 250
+) -> tuple[str, str]:
+    """
+    Returns (reply_text, provider_used).
+
+    Tries Gemini first; falls back to Groq only on
+    rate-limit/quota-style failures.
+    """
+
+    try:
+        return _call_gemini(system_prompt, messages, max_tokens), "gemini"
+
+    except Exception as e:
+        if not _is_fallback_worthy_error(e):
+            raise  # real bug — don't mask it
+
+        try:
+            return _call_groq(system_prompt, messages, max_tokens), "groq"
+
+        except Exception as groq_error:
+            raise RuntimeError(
+                f"Both providers failed. "
+                f"Gemini: {e} | Groq: {groq_error}"
+            ) from groq_error
