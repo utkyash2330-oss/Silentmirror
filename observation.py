@@ -291,15 +291,17 @@ def get_recent_journal_entries(user_id, limit=3):
 
 def get_hobbies(user_id):
     """
-    Declared hobby list. Included in context for awareness only — the
-    prompt explicitly forbids surfacing these unprompted (see prompts.py).
-    Storage here is identical in spirit to saved insights: user-owned,
-    never auto-decays.
+    Declared hobby list, each with a declared setting_type (indoor/
+    outdoor/any) — a real stored fact, not something the model has to
+    infer or guess about the hobby itself. Included in context for
+    awareness only — prompts.py forbids surfacing these unprompted.
     """
     db = get_db()
-    rows = db.execute("SELECT name FROM hobbies WHERE user_id=?", (user_id,)).fetchall()
+    rows = db.execute(
+        "SELECT name, setting_type FROM hobbies WHERE user_id=?", (user_id,)
+    ).fetchall()
     db.close()
-    return [r["name"] for r in rows]
+    return [{"name": r["name"], "setting_type": r["setting_type"]} for r in rows]
 
 
 def format_context_for_prompt(user_id, min_tier="eligible"):
@@ -320,7 +322,8 @@ def format_context_for_prompt(user_id, min_tier="eligible"):
 
     hobbies = get_hobbies(user_id)
     if hobbies:
-        lines.append(f"- (declared hobbies, awareness only, never bring up unprompted): {', '.join(hobbies)}")
+        hobby_str = ', '.join(f"{h['name']} ({h['setting_type']})" for h in hobbies)
+        lines.append(f"- (declared hobbies with setting — indoor/outdoor/any — awareness only, never bring up unprompted): {hobby_str}")
 
     patterns = get_active_patterns(user_id, min_tier=min_tier)
     for p in patterns:
