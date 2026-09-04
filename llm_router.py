@@ -1,16 +1,16 @@
 """
 Silent Mirror — Model Router
 
-Tries Groq (Llama 3.3) first. If Groq raises a rate-limit / quota /
+Tries Gemini first. If Gemini raises a rate-limit / quota /
 token-limit error, automatically retries the same conversation through
-Gemini instead. Both providers are normalized to return a single plain
+Groq instead. Both providers are normalized to return a single plain
 string, so the rest of app.py never needs to know which one answered.
 
 Requires GEMINI_API_KEY set alongside GROQ_API_KEY in Railway.
 """
 
 import os
-from groq import Groq, APIStatusError as GroqAPIStatusError
+from groq import Groq
 from google import genai
 from google.genai import types as genai_types
 
@@ -43,6 +43,58 @@ def _is_fallback_worthy_error(exc: Exception) -> bool:
     ])
 
 
+def _call_gemini(system_prompt: str, messages: list, max_tokens: int) -> str:
+    """
+    messages: list of {"role": "user"|"assistant", "content": str}
+    Gemini expects role "user"/"model", so "assistant" gets remapped.
+    """
+    contents = []
+    for m in messages:
+        role = "model" if m["role"] == "assistant" else "user"
+        contents.append(
+            genai_types.Content(
+                role=role,
+                parts=[genai_types.Part.from_text(text=m["content"])],
+            )
+        )
+
+    response = gemini_client.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=contents,
+        config=genai_types.GenerateContentConfig(
+            system_instruction=system_prompt,
+            max_output_tokens=max_tokens,
+        ),
+    )
+
+    text = (response.text or "").strip()
+    if not text:
+        raise RuntimeError("empty completion from gemini")
+    return text
+
+
+def _call_groq(system_prompt: str, messages: list, max_tokens: int) -> str:
+    """
+    messages: list of {"role": "user"|"assistant", "content": str}
+    Groq's chat completions API is OpenAI-shaped, so we just prepend
+    the system message.
+    """
+    full_messages = [{"role": "system", "content": system_prompt}] + messages
+
+    response = groq_client.chat.completions.create(
+        model=GROQ_MODEL,
+        messages=full_messages,
+        max_tokens=max_tokens,
+    )
+
+    text = (response.choices[0].message.content or "").strip()
+    if not text:
+        # Known gpt-oss bug: reasoning tokens eat the budget before any
+        # visible content is produced.
+        raise RuntimeError("empty completion from groq (reasoning budget exhausted)")
+    return text
+
+
 def get_completion(
     system_prompt: str,
     messages: list,
@@ -54,48 +106,6 @@ def get_completion(
     Tries Gemini first; falls back to Groq only on
     rate-limit/quota-style failures.
     """
-
-    try:
-        # Primary provider
-        return _call_gemini(
-            system_prompt,
-            messages,
-            max_tokens
-        ), "gemini"
-
-    except Exception as e:
-        # Only fallback for errors that are safe to retry
-        if not _is_fallback_worthy_error(e):
-            raise
-
-        try:
-            # Fallback provider
-            return _call_groq(
-                system_prompt,
-                messages,
-                max_tokens
-            ), "groq"
-
-        except Exception as groq_error:
-            # Both providers failed
-            raise RuntimeError(
-                f"Both providers failed. "
-                f"Gemini: {e} | Groq: {groq_error}"
-            ) from groq_error
-
-
-def get_completion(
-    system_prompt: str,
-    messages: list,
-    max_tokens: int = 250
-) -> tuple[str, str]:
-    """
-    Returns (reply_text, provider_used).
-
-    Tries Gemini first; falls back to Groq only on
-    rate-limit/quota-style failures.
-    """
-
     try:
         return _call_gemini(system_prompt, messages, max_tokens), "gemini"
 
