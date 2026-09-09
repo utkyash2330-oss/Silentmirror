@@ -1,16 +1,16 @@
 """
 Silent Mirror — Model Router
 
-Tries Groq (Llama 3.3) first. If Groq raises a rate-limit / quota /
+Tries Gemini first. If Gemini raises a rate-limit / quota /
 token-limit error, automatically retries the same conversation through
-Gemini instead. Both providers are normalized to return a single plain
+Groq instead. Both providers are normalized to return a single plain
 string, so the rest of app.py never needs to know which one answered.
 
 Requires GEMINI_API_KEY set alongside GROQ_API_KEY in Railway.
 """
 
 import os
-from groq import Groq, APIStatusError as GroqAPIStatusError
+from groq import Groq
 from google import genai
 from google.genai import types as genai_types
 
@@ -18,7 +18,11 @@ groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 gemini_client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
 
 GROQ_MODEL = "openai/gpt-oss-120b"
-GEMINI_MODEL = "gemini-2.0-flash"
+# gemini-2.0-flash was shut down by Google on June 1, 2026 — every call
+# was hitting a 404, which never matched the fallback-worthy checks
+# below, so it failed outright on every message with no fallback.
+# gemini-3.5-flash is Google's own stated migration target.
+GEMINI_MODEL = "gemini-3.5-flash"
 
 # Status codes/messages that mean "this provider is out of capacity right
 # now" as opposed to a real bug worth surfacing as an error.
@@ -43,66 +47,95 @@ def _is_fallback_worthy_error(exc: Exception) -> bool:
     ])
 
 
-def _call_groq(system_prompt: str, messages: list, max_tokens: int) -> str:
-    response = groq_client.chat.completions.create(
-        model=GROQ_MODEL,
-        max_tokens=max_tokens,
-        # gpt-oss-120b is a reasoning model — it spends tokens on hidden
-        # chain-of-thought before the visible answer. "low" keeps that
-        # spend small so max_tokens isn't eaten before real content
-        # appears. This is a known Groq-documented behavior, not a guess.
-        reasoning_effort="low",
-        messages=[{"role": "system", "content": system_prompt}, *messages]
-    )
-    content = response.choices[0].message.content
-    if not content or not content.strip():
-        # Known gpt-oss failure mode: reasoning consumed the whole
-        # budget, leaving nothing visible, even with low effort. Treat
-        # this as a real failure so the router can fall back to Gemini,
-        # rather than silently returning an empty reply to the user.
-        raise RuntimeError("Groq returned an empty completion (likely reasoning budget exhausted)")
-    return content
-
-
 def _call_gemini(system_prompt: str, messages: list, max_tokens: int) -> str:
-    # Gemini uses role "model" instead of "assistant", and a
-    # contents-of-parts structure instead of OpenAI-style messages.
+    """
+    messages: list of {"role": "user"|"assistant", "content": str}
+    Gemini expects role "user"/"model", so "assistant" gets remapped.
+    """
     contents = []
     for m in messages:
         role = "model" if m["role"] == "assistant" else "user"
-        contents.append(genai_types.Content(
-            role=role,
-            parts=[genai_types.Part(text=m["content"])]
-        ))
+        contents.append(
+            genai_types.Content(
+                role=role,
+                parts=[genai_types.Part.from_text(text=m["content"])],
+            )
+        )
 
     response = gemini_client.models.generate_content(
         model=GEMINI_MODEL,
         contents=contents,
         config=genai_types.GenerateContentConfig(
             system_instruction=system_prompt,
-            max_output_tokens=max_tokens
-        )
+            max_output_tokens=max_tokens,
+            # Gemini 3.5 Flash is a reasoning model — "minimal" is
+            # Google's own documented recommendation for high-throughput
+            # chat specifically. Without this, default thinking effort
+            # is "medium," which reportedly adds real latency (TTFT up
+            # to ~17s at "high") and risks the same reasoning-budget-
+            # eats-output-tokens failure we just fixed for Groq's
+            # gpt-oss model — same category of model, same precaution.
+            thinking_config=genai_types.ThinkingConfig(thinking_level="minimal"),
+        ),
     )
-    return response.text
+
+    text = (response.text or "").strip()
+    if not text:
+        raise RuntimeError("empty completion from gemini")
+    return text
 
 
-def get_completion(system_prompt: str, messages: list, max_tokens: int = 250) -> tuple[str, str]:
+def _call_groq(system_prompt: str, messages: list, max_tokens: int) -> str:
     """
-    Returns (reply_text, provider_used) so callers/logs can tell which
-    model actually answered. Tries Groq first; falls back to Gemini only
-    on rate-limit/quota-style failures, not on every error (a real bug in
-    the request should surface, not silently retry on a different model).
+    messages: list of {"role": "user"|"assistant", "content": str}
+    Groq's chat completions API is OpenAI-shaped, so we just prepend
+    the system message.
+    """
+    full_messages = [{"role": "system", "content": system_prompt}] + messages
+
+    response = groq_client.chat.completions.create(
+        model=GROQ_MODEL,
+        messages=full_messages,
+        max_tokens=max_tokens,
+        # gpt-oss-120b is a reasoning model — it spends tokens on hidden
+        # chain-of-thought before the visible answer. "low" keeps that
+        # spend small so max_tokens isn't eaten before real content
+        # appears. Documented Groq behavior, not a guess — this was
+        # dropped in a rewrite and needed restoring.
+        reasoning_effort="low",
+    )
+
+    text = (response.choices[0].message.content or "").strip()
+    if not text:
+        # Known gpt-oss bug: reasoning tokens eat the budget before any
+        # visible content is produced, even with reasoning_effort=low.
+        raise RuntimeError("empty completion from groq (reasoning budget exhausted)")
+    return text
+
+
+def get_completion(
+    system_prompt: str,
+    messages: list,
+    max_tokens: int = 700
+) -> tuple[str, str]:
+    """
+    Returns (reply_text, provider_used).
+
+    Tries Gemini first; falls back to Groq only on
+    rate-limit/quota-style failures.
     """
     try:
-        return _call_groq(system_prompt, messages, max_tokens), "groq"
-    except (GroqAPIStatusError, Exception) as e:
+        return _call_gemini(system_prompt, messages, max_tokens), "gemini"
+
+    except Exception as e:
         if not _is_fallback_worthy_error(e):
-            raise  # real bug — don't mask it by silently switching providers
+            raise  # real bug — don't mask it
+
         try:
-            return _call_gemini(system_prompt, messages, max_tokens), "gemini"
-        except Exception as gemini_error:
-            # both providers down — let this raise up to the /chat route,
-            # which should return a clear error rather than a fake reply
+            return _call_groq(system_prompt, messages, max_tokens), "groq"
+
+        except Exception as groq_error:
             raise RuntimeError(
-                f"Both providers failed. Groq: {e} | Gemini: {gemini_error}"
-            ) from gemini_error
+                f"Both providers failed. "
+                f"Gemini: {e} | Groq: {groq_error}"
+            ) from groq_error
