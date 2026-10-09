@@ -259,7 +259,13 @@ def chat():
 
     try:
         raw, provider = llm_router.get_completion(full_system, history, max_tokens=700)
-    except RuntimeError as e:
+    except Exception as e:
+        # Broad on purpose: llm_router's fallback logic should normally
+        # catch provider issues and either recover via the other
+        # provider or raise a clean RuntimeError. This is the last
+        # line of defense in case an unrecognized exception shape ever
+        # slips through unfallback'd — the user gets a clean message
+        # instead of a raw 500, regardless of the exact exception type.
         return jsonify({"error": "Both models are currently unavailable. Please try again shortly."}), 503
 
     # single shared mode judgment for this turn — the user's manual pin

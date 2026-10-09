@@ -32,18 +32,27 @@ RATE_LIMIT_STATUS_CODES = {429, 503}
 def _is_fallback_worthy_error(exc: Exception) -> bool:
     """
     True for failures that mean 'this provider can't answer right now'
-    — rate limits, quota, AND the known gpt-oss empty-completion bug
-    (reasoning budget exhausted before any visible content). False for
-    genuine bugs that should surface as errors, not get silently masked
-    by switching providers.
+    — rate limits, quota, capacity/availability issues, AND the known
+    gpt-oss empty-completion bug. False for genuine bugs that should
+    surface as errors, not get silently masked by switching providers.
+
+    Checks several possible attribute names, not just one — SDK
+    exception classes don't reliably expose the HTTP status under the
+    same attribute name, so a single getattr(exc, "status_code") can
+    silently miss a real 503. Also checks "503"/"429" directly in the
+    string form as a final safety net.
     """
-    status = getattr(exc, "status_code", None)
-    if status in RATE_LIMIT_STATUS_CODES:
-        return True
+    for attr in ("status_code", "code", "http_status"):
+        status = getattr(exc, attr, None)
+        if status in RATE_LIMIT_STATUS_CODES:
+            return True
+
     msg = str(exc).lower()
     return any(kw in msg for kw in [
         "rate limit", "quota", "token limit", "resource_exhausted",
         "empty completion",  # matches the RuntimeError raised in _call_groq
+        "unavailable", "high demand", "overloaded", "503", "429",
+        "try again later",
     ])
 
 
